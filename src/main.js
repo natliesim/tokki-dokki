@@ -21,7 +21,8 @@ if (window.ResizeObserver) new ResizeObserver(resizeCanvas).observe(canvas);
 const STEP = 1 / 60;
 const GRAVITY = 0.35;
 const JUMP = -10.5;
-const MENU_JUMP = -7.5;
+const MENU_JUMP = -7;
+const STOMP_JUMP = -11.5;
 const SPRING_JUMP = -17;
 const MOVE_ACCEL = 0.6;
 const MAX_SPEED = 6;
@@ -40,6 +41,14 @@ const HIGHLIGHT = 'rgba(255, 222, 40, 0.6)';
 const PINK = '#f6a5bf';
 const FONT = '"Patrick Hand", "Comic Sans MS", cursive';
 const MARGIN_X = 36;
+
+// Difficulty: a new level every 250 points. Each level runs the game a bit
+// faster and adds more sliding ledges, breakable traps and ink blobs.
+const LEVEL_EVERY = 250;
+const MAX_LEVEL = 8;
+const SPEED_PER_LEVEL = 0.06; // level 8 runs 42% faster than level 1
+const BLOBS_FROM_SCORE = 150;
+function levelFor(score) { return Math.min(1 + Math.floor(score / LEVEL_EVERY), MAX_LEVEL); }
 
 // ---------- small helpers ----------
 
@@ -198,6 +207,9 @@ const sfx = {
   break: () => crunch(),
   over: () => [440, 370, 311, 247].forEach((f, i) => tone({ freq: f, dur: 0.2, type: 'triangle', delay: i * 0.14 })),
   best: () => [523, 659, 784, 1047].forEach((f, i) => tone({ freq: f, dur: 0.16, type: 'square', vol: 0.05, delay: 0.65 + i * 0.1 })),
+  levelUp: () => [523, 659, 784, 988, 1175].forEach((f, i) => tone({ freq: f, dur: 0.12, type: 'triangle', vol: 0.1, delay: i * 0.07 })),
+  stomp: () => { tone({ freq: 220, to: 90, dur: 0.12, type: 'square', vol: 0.08 }); tone({ freq: 500, to: 1100, dur: 0.18, type: 'sine', vol: 0.15, delay: 0.05 }); },
+  splat: () => { crunch(0.25, 0.25); tone({ freq: 300, to: 60, dur: 0.4, type: 'sawtooth', vol: 0.08 }); },
   click: () => tone({ freq: 700, to: 450, dur: 0.06, type: 'square', vol: 0.05 }),
 };
 
@@ -219,12 +231,13 @@ let state;
 // than this, so there is always a way up.
 const MAX_SOLID_GAP = 120;
 
-function makePlatform(y, type) {
+function makePlatform(y, type, difficulty = 0) {
+  const speed = rand(1, 2) * (1 + 1.3 * difficulty); // sliding ledges speed up
   return {
     x: rand(MARGIN_X - 10, W - PLATFORM_W - 4),
     y,
     type,
-    vx: type === 'moving' ? rand(1, 2.2) * (Math.random() < 0.5 ? -1 : 1) : 0,
+    vx: type === 'moving' ? speed * (Math.random() < 0.5 ? -1 : 1) : 0,
     spring: type === 'normal' && Math.random() < 0.07,
     springT: 0,
     broken: false,
@@ -234,18 +247,38 @@ function makePlatform(y, type) {
   };
 }
 
+function makeBlob(y, difficulty) {
+  const range = 30 + 80 * difficulty;
+  return {
+    baseX: rand(MARGIN_X + 20 + range * 0.3, W - 20 - range * 0.3),
+    x: 0,
+    y,
+    range,
+    speed: rand(1, 1.6) * (1 + 1.5 * difficulty), // side-to-side speed grows
+    phase: rand(0, Math.PI * 2),
+    r: 13,
+    dead: false,
+    fallVy: 0,
+    seed: (Math.random() * 1e9) | 0,
+  };
+}
+
 // Add ledges above the screen. Solid ledges (normal or moving) form a chain
-// you can always climb; breakable ledges are only extra traps in the gaps.
-function spawnLedges(platforms, climbed, solidTop, upTo) {
-  const difficulty = Math.min(climbed / 5000, 1);
-  const gapMax = 80 + 40 * difficulty;
+// you can always climb; breakable ledges and ink blobs go in the gaps.
+// Difficulty grows from 0 at the start to 1 at score 1500.
+function spawnLedges(platforms, blobs, climbed, solidTop, upTo) {
+  const difficulty = Math.min(climbed / 15000, 1);
+  const gapMax = 80 + (MAX_SOLID_GAP - 80) * difficulty;
   while (solidTop > upTo) {
-    const gap = rand(45, gapMax);
+    const gap = rand(45 + 15 * difficulty, gapMax);
     const y = solidTop - gap;
-    const type = Math.random() < 0.05 + 0.2 * difficulty ? 'moving' : 'normal';
-    platforms.push(makePlatform(y, type));
-    if (gap > 70 && Math.random() < 0.15 + 0.35 * difficulty) {
-      platforms.push(makePlatform(y + gap / 2, 'fragile'));
+    const type = Math.random() < 0.08 + 0.32 * difficulty ? 'moving' : 'normal';
+    platforms.push(makePlatform(y, type, difficulty));
+    const blobChance = climbed > BLOBS_FROM_SCORE * 10 ? 0.06 + 0.2 * difficulty : 0;
+    if (gap > 70 && Math.random() < blobChance) {
+      blobs.push(makeBlob(y + gap / 2, difficulty));
+    } else if (gap > 65 && Math.random() < 0.15 + 0.45 * difficulty) {
+      platforms.push(makePlatform(y + gap / 2, 'fragile', difficulty));
     }
     solidTop = y;
   }
@@ -257,11 +290,16 @@ function reset(mode) {
     x: W / 2 - PLATFORM_W / 2, y: START_Y, type: 'normal', vx: 0, spring: false, springT: 0,
     broken: false, fallVy: 0, spread: 0, seed: 1,
   }];
-  const solidTop = spawnLedges(platforms, 0, START_Y, -H);
+  const blobs = [];
+  const solidTop = spawnLedges(platforms, blobs, 0, START_Y, -H);
   state = {
     mode, // 'menu' | 'play' | 'over'
-    player: { x: W / 2 - 15, y: START_Y - 30, w: 30, h: 30, vx: 0, vy: 0, face: 1, squash: 0 },
+    player: { x: W / 2 - 15, y: START_Y - 30, w: 30, h: 30, vx: 0, vy: 0, face: 1, squash: 0, dead: false },
     platforms,
+    blobs,
+    level: 1,
+    speed: 1,
+    banner: null,
     particles: [],
     climbed: 0,
     solidTop,
@@ -320,9 +358,10 @@ function update() {
   state.shake *= 0.85;
   if (state.mode !== 'menu') state.reveal = Math.min(1, state.reveal + STEP * 4);
 
+  if (state.banner) { state.banner.t += STEP; if (state.banner.t > 1.6) state.banner = null; }
   if (state.mode === 'over') { state.overT += STEP; return; }
 
-  const playing = state.mode === 'play';
+  const playing = state.mode === 'play' && !p.dead;
 
   // Steering.
   const dir = playing ? ((keys.right ? 1 : 0) - (keys.left ? 1 : 0) || pointerDir) : 0;
@@ -337,7 +376,7 @@ function update() {
   p.vy += GRAVITY;
   p.y += p.vy;
   p.squash *= 0.85;
-  if (p.vy > 0) {
+  if (p.vy > 0 && !p.dead) {
     for (const pl of state.platforms) {
       if (pl.broken) continue;
       const overlapsX = p.x + p.w - 6 > pl.x && p.x + 6 < pl.x + PLATFORM_W;
@@ -374,6 +413,32 @@ function update() {
     pl.springT *= 0.85;
   }
 
+  // Ink blobs drift side to side. Land on top to squash one; touch it any
+  // other way and the bunny gets inked.
+  for (const b of state.blobs) {
+    if (b.dead) { b.fallVy += 0.4; b.y += b.fallVy; continue; }
+    b.phase += b.speed * STEP;
+    b.x = b.baseX + Math.sin(b.phase) * b.range;
+    if (!playing) continue;
+    const bx = p.x + p.w / 2, byy = p.y + p.h / 2;
+    if (Math.hypot(bx - b.x, byy - b.y) < b.r + 13) {
+      if (p.vy > 0 && p.y + p.h < b.y + 2) {
+        b.dead = true;
+        p.vy = STOMP_JUMP;
+        p.squash = 1;
+        sfx.stomp();
+        boing(b.x, b.y - 10);
+        state.particles[state.particles.length - 1].text = 'squish!';
+      } else {
+        p.dead = true;
+        p.vy = -4;
+        p.vx = 0;
+        state.shake = 12;
+        sfx.splat();
+      }
+    }
+  }
+
   // Scroll the page as the bunny climbs.
   const line = H * 0.4;
   if (p.y < line) {
@@ -381,18 +446,29 @@ function update() {
     p.y = line;
     state.climbed += dy;
     for (const pl of state.platforms) pl.y += dy;
+    for (const b of state.blobs) b.y += dy;
     state.solidTop += dy;
     for (const pt of state.particles) pt.y += dy;
   }
   state.score = Math.floor(state.climbed / 10);
 
+  const level = levelFor(state.score);
+  if (playing && level > state.level) {
+    state.level = level;
+    state.speed = 1 + SPEED_PER_LEVEL * (level - 1);
+    state.banner = { text: `Level ${level}`, t: 0 };
+    sfx.levelUp();
+  }
+
   state.platforms = state.platforms.filter((pl) => pl.y < H + 60);
-  state.solidTop = spawnLedges(state.platforms, state.climbed, state.solidTop, -40);
+  state.blobs = state.blobs.filter((b) => b.y < H + 60);
+  state.solidTop = spawnLedges(state.platforms, state.blobs, state.climbed, state.solidTop, -40);
 
   if (p.y > H + 20) {
     state.mode = 'over';
     state.overT = 0;
     state.shake = 10;
+    state.speed = 1;
     sfx.over();
     if (state.score > best) {
       state.newBest = best > 0;
@@ -538,6 +614,47 @@ function drawPlatformBody(pl) {
   ctx.restore();
 }
 
+function drawBlob(b, x, y, r0, seed, lookX = 0, lookY = 0) {
+  const r = pen(seed);
+  ctx.save();
+  if (b && b.dead) {
+    ctx.globalAlpha = clamp(1 - b.fallVy / 10, 0, 1);
+    ctx.translate(x, y);
+    ctx.scale(1.3, 0.5);
+    ctx.translate(-x, -y);
+  }
+  // A scribbly ink body.
+  fillEllipse(x, y, r0, r0 * 0.92, '#25283a');
+  ctx.strokeStyle = '#25283a';
+  ctx.lineWidth = 1.6;
+  for (let i = 0; i < 3; i++) sketchEllipse(x, y, r0 + 2, r0 * 0.92 + 2, r, 2.2);
+  // Little drips.
+  ctx.lineWidth = 2.4;
+  sketchLine(x - 6, y + r0 - 2, x - 7, y + r0 + 5, r, 0.6);
+  sketchLine(x + 5, y + r0 - 1, x + 5, y + r0 + 8, r, 0.6);
+  // Eyes watch the bunny.
+  const ex = clamp(lookX, -1, 1) * 2, ey = clamp(lookY, -1, 1) * 2;
+  for (const side of [-1, 1]) {
+    fillEllipse(x + side * 5, y - 2, 4.2, 4.2, '#fff');
+    fillEllipse(x + side * 5 + ex, y - 2 + ey, 1.9, 1.9, '#25283a');
+  }
+  // Grumpy brows.
+  ctx.strokeStyle = '#fff';
+  ctx.lineWidth = 1.6;
+  sketchLine(x - 9, y - 9, x - 2, y - 6, r, 0.3);
+  sketchLine(x + 9, y - 9, x + 2, y - 6, r, 0.3);
+  ctx.restore();
+}
+
+function drawBlobs() {
+  const p = state.player;
+  for (const b of state.blobs) {
+    const dx = p.x + p.w / 2 - b.x, dy = p.y + p.h / 2 - b.y;
+    const d = Math.hypot(dx, dy) || 1;
+    drawBlob(b, b.x, b.y + Math.sin(b.phase * 2) * 3, b.r, b.seed, dx / d, dy / d);
+  }
+}
+
 function drawBunny(p, seed) {
   const r = pen(seed);
   const cx = p.x + p.w / 2;
@@ -581,6 +698,12 @@ function drawBunny(p, seed) {
   // Face looks the way the bunny is heading.
   const fx = f * 3;
   for (const side of [-1, 1]) {
+    if (p.dead) {
+      ctx.lineWidth = 1.6;
+      sketchLine(fx + side * 5.5 - 2.5, -20.5, fx + side * 5.5 + 2.5, -15.5, r, 0.2);
+      sketchLine(fx + side * 5.5 + 2.5, -20.5, fx + side * 5.5 - 2.5, -15.5, r, 0.2);
+      continue;
+    }
     fillEllipse(fx + side * 5.5, -18, 2.2, 3, PENCIL);
     fillEllipse(fx + side * 5.5 + 0.8, -19.2, 0.8, 0.8, '#fff');
     ctx.globalAlpha = 0.6;
@@ -668,18 +791,37 @@ function drawMenu() {
     ['normal', true, 'springs go boing'],
   ];
   rows.forEach(([type, spring, text], i) => {
-    const y = 194 + i * 32 + (spring ? 6 : 0);
+    const y = 190 + i * 29 + (i >= 3 ? 6 : 0);
     drawPlatformShape(78, y, 44, type, spring, 0, 10 + i);
     hand(text, 136, y + 7, 19, PENCIL, 'left');
   });
+  drawBlob(null, 100, 322, 11, 15, 1, 0);
+  hand('ink blobs: hop on top, don\u2019t touch!', 136, 322, 19, PENCIL, 'left');
 
-  hand('← → or A / D  ·  tap the sides on a phone', W / 2 + 6, 334, 17, 'rgba(58,58,72,0.85)');
-  button('Play', W / 2 - 64, 352, 140, 48, startGame, 5);
+  hand('← → or A / D  ·  tap the sides on a phone', W / 2 + 6, 356, 17, 'rgba(58,58,72,0.85)');
+  hand('it gets faster every 250 points!', W / 2 + 6, 378, 17, RED_PEN);
+  button('Play', W / 2 - 64, 394, 140, 46, startGame, 5);
 }
 
 function drawHud() {
   hand(String(state.score), MARGIN_X + 10, 28, 34, PENCIL, 'left');
   if (best > 0) hand(`best ${best}`, MARGIN_X + 12, 56, 17, RED_PEN, 'left');
+  hand(`level ${state.level}`, MARGIN_X + 12, best > 0 ? 78 : 56, 17, BLUE_PEN, 'left');
+
+  if (state.banner) {
+    const t = state.banner.t;
+    const pop = easeOutBack(clamp(t / 0.35, 0, 1));
+    ctx.save();
+    ctx.globalAlpha = clamp((1.6 - t) / 0.4, 0, 1);
+    ctx.translate(W / 2 + 10, 190 - t * 12);
+    ctx.rotate(-0.06);
+    ctx.scale(pop, pop);
+    ctx.fillStyle = HIGHLIGHT;
+    ctx.fillRect(-95, -10, 190, 30);
+    hand(state.banner.text, 0, -4, 48, BLUE_PEN);
+    hand('faster!', 0, 32, 24, RED_PEN);
+    ctx.restore();
+  }
 }
 
 function drawGameOver() {
@@ -739,6 +881,7 @@ function draw() {
   if (state.shake > 0.3) ctx.translate(rand(-state.shake, state.shake), rand(-state.shake, state.shake));
   drawPaper();
   state.platforms.forEach(drawPlatform);
+  drawBlobs();
   drawParticles();
   drawBunny(state.player, 42);
   ctx.restore();
@@ -797,7 +940,7 @@ for (const type of ['pointerup', 'pointercancel', 'pointerleave']) {
 let last = performance.now();
 let acc = 0;
 function loop(now) {
-  acc += Math.min((now - last) / 1000, 0.1);
+  acc += Math.min((now - last) / 1000, 0.1) * state.speed;
   last = now;
   while (acc >= STEP) { update(); acc -= STEP; }
   boil = Math.floor(now / 130);
@@ -806,5 +949,7 @@ function loop(now) {
 }
 
 reset('menu');
+// Lets automated tests look at the game while developing (left out of builds).
+if (import.meta.env?.DEV) window.__game = () => state;
 document.fonts?.load(`20px ${FONT}`);
 requestAnimationFrame(loop);
