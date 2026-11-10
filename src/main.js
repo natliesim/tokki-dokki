@@ -2,6 +2,8 @@
 
 const W = 400;
 const H = 600;
+import { boardEnabled, fetchTopScores, submitScore, cleanName, qualifies, BOARD_SIZE, NAME_MAX } from './leaderboard.js';
+
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
 // Match the canvas to its real on-screen size so it stays sharp at any size.
@@ -220,6 +222,96 @@ function toggleMute() {
   sfx.click();
 }
 
+// ---------- high score board ----------
+
+const board = { top: [], status: 'idle' }; // status: idle | loading | ready | error
+let boardRequest = null;
+
+function loadBoard() {
+  if (!boardEnabled) return Promise.resolve();
+  if (boardRequest) return boardRequest;
+  board.status = 'loading';
+  boardRequest = fetchTopScores()
+    .then((top) => { board.top = top; board.status = 'ready'; })
+    .catch(() => { board.status = 'error'; })
+    .finally(() => { boardRequest = null; });
+  return boardRequest;
+}
+
+// A real text box laid over the canvas, so typing works on every device.
+const nameInput = document.createElement('input');
+Object.assign(nameInput, {
+  type: 'text', maxLength: NAME_MAX, placeholder: 'your name', autocomplete: 'off', spellcheck: false, hidden: true,
+});
+nameInput.setAttribute('aria-label', 'Your name for the high score board');
+Object.assign(nameInput.style, {
+  position: 'fixed', zIndex: '5', boxSizing: 'border-box', padding: '0 4px', margin: '0',
+  background: 'rgba(255,255,255,0.55)', color: PENCIL, border: 'none', borderBottom: `2px dashed ${PENCIL}`,
+  borderRadius: '0', outline: 'none', textAlign: 'center', fontFamily: FONT,
+});
+nameInput.addEventListener('focus', () => { nameInput.style.background = 'rgba(255,255,255,0.9)'; });
+nameInput.addEventListener('blur', () => { nameInput.style.background = 'rgba(255,255,255,0.55)'; });
+nameInput.addEventListener('keydown', (e) => {
+  e.stopPropagation();
+  if (e.key === 'Enter') { e.preventDefault(); saveName(); }
+});
+nameInput.addEventListener('keyup', (e) => e.stopPropagation());
+document.body.appendChild(nameInput);
+
+// Place the text box over a spot given in game coordinates.
+function placeNameInput(x, y, w, h) {
+  const rect = canvas.getBoundingClientRect();
+  const k = rect.width / W;
+  Object.assign(nameInput.style, {
+    left: `${rect.left + x * k}px`, top: `${rect.top + y * k}px`,
+    width: `${w * k}px`, height: `${h * k}px`, fontSize: `${22 * k}px`,
+  });
+}
+
+function onGameOver() {
+  if (!boardEnabled || state.score <= 0) return;
+  const run = state;
+  board.status = 'idle';
+  loadBoard().then(() => {
+    if (state !== run || board.status !== 'ready' || !qualifies(board.top, run.score)) return;
+    run.entry = 'ask';
+    nameInput.value = safeGet('tokkiName') || '';
+  });
+}
+
+function saveName() {
+  const run = state;
+  if (run.entry !== 'ask' && run.entry !== 'error') return;
+  const name = cleanName(nameInput.value);
+  if (!name) { nameInput.placeholder = 'type a name first'; nameInput.focus(); return; }
+  safeSet('tokkiName', name);
+  run.entry = 'saving';
+  nameInput.blur();
+  sfx.click();
+  submitScore(name, run.score)
+    .then(() => fetchTopScores())
+    .then((top) => {
+      board.top = top;
+      board.status = 'ready';
+      run.rank = top.findIndex((row) => row.name === name) + 1;
+      run.entry = 'saved';
+      if (state === run) sfx.best();
+    })
+    .catch(() => { run.entry = 'error'; });
+}
+
+function openBoard() {
+  sfx.click();
+  state.mode = 'board';
+  board.status = 'idle';
+  loadBoard();
+}
+
+function closeBoard() {
+  sfx.click();
+  state.mode = 'menu';
+}
+
 // ---------- game state ----------
 
 const keys = { left: false, right: false };
@@ -309,6 +401,8 @@ function reset(mode) {
     newBest: false,
     buttons: [],
     time: 0,
+    entry: 'none', // high score name entry: none | ask | saving | saved | error
+    rank: 0,
     reveal: mode === 'menu' ? 0 : 1,
   };
 }
@@ -318,6 +412,8 @@ function startGame() {
   sfx.click();
   if (state.mode === 'over') reset('play');
   state.mode = 'play';
+  nameInput.hidden = true;
+  if (boardEnabled && board.status !== 'ready') loadBoard();
 }
 
 // ---------- effects ----------
@@ -356,7 +452,7 @@ function update() {
   }
   state.particles = state.particles.filter((pt) => pt.life < pt.max);
   state.shake *= 0.85;
-  if (state.mode !== 'menu') state.reveal = Math.min(1, state.reveal + STEP * 4);
+  if (state.mode === 'play' || state.mode === 'over') state.reveal = Math.min(1, state.reveal + STEP * 4);
 
   if (state.mode === 'over') { state.overT += STEP; return; }
 
@@ -473,6 +569,7 @@ function update() {
       safeSet('skyHopperBest', String(best));
       if (state.newBest) sfx.best();
     }
+    onGameOver();
   }
 }
 
@@ -796,7 +893,12 @@ function drawMenu() {
   hand('ink blobs: hop on top, don\u2019t touch!', 126, 362, 19, PENCIL, 'left');
 
   hand('← → or A / D  ·  tap the sides on a phone', W / 2 + 6, 404, 17, 'rgba(58,58,72,0.85)');
-  button('Play', W / 2 - 64, 420, 140, 46, startGame, 5);
+  if (boardEnabled) {
+    button('Play', W / 2 - 136, 420, 136, 46, startGame, 5);
+    button('Scores', W / 2 + 16, 420, 136, 46, openBoard, 7);
+  } else {
+    button('Play', W / 2 - 64, 420, 140, 46, startGame, 5);
+  }
 }
 
 function drawHud() {
@@ -807,7 +909,8 @@ function drawHud() {
 function drawGameOver() {
   const t = clamp(state.overT / 0.45, 0, 1);
   const slide = (1 - easeOutBack(t)) * H * 0.7;
-  const cw = 300, ch = 300;
+  const asking = state.entry !== 'none';
+  const cw = 300, ch = asking ? 360 : 300;
   const cx = (W - cw) / 2 + 4, cy = 140 + slide;
   const r = pen(9);
 
@@ -851,7 +954,62 @@ function drawGameOver() {
     }
   }
 
-  if (t >= 1) button('Play again', W / 2 - 86, cy + 220, 180, 50, startGame, 6);
+  const showInput = t >= 1 && (state.entry === 'ask' || state.entry === 'error');
+  if (asking) {
+    if (state.entry === 'ask') hand('you made the top 10!', W / 2 + 4, cy + 222, 22, BLUE_PEN);
+    if (state.entry === 'error') hand('couldn\u2019t save. try again?', W / 2 + 4, cy + 222, 20, RED_PEN);
+    if (state.entry === 'saving') hand('saving\u2026', W / 2 + 4, cy + 252, 22, PENCIL);
+    if (state.entry === 'saved') {
+      hand('saved!', W / 2 + 4, cy + 232, 26, BLUE_PEN);
+      if (state.rank) hand(`you\u2019re #${state.rank} on the board`, W / 2 + 4, cy + 262, 20, PENCIL);
+    }
+    if (showInput) {
+      placeNameInput(cx + 30, cy + 240, 150, 36);
+      button('Save', cx + 192, cy + 238, 80, 40, saveName, 8);
+    }
+  }
+  if (nameInput.hidden === showInput) {
+    nameInput.hidden = !showInput;
+    if (showInput && window.matchMedia?.('(pointer: fine)').matches) nameInput.focus({ preventScroll: true });
+  }
+  if (t >= 1) button('Play again', W / 2 - 86, cy + (asking ? 290 : 220), 180, 50, startGame, 6);
+}
+
+function drawBoard() {
+  const r = pen(31);
+  hand('High scores', W / 2 + 6, 84, 56, BLUE_PEN, 'center', -0.03);
+  ctx.strokeStyle = BLUE_PEN;
+  ctx.lineWidth = 2.5;
+  sketchLine(W / 2 - 100, 116, W / 2 + 110, 110, r, 1.5);
+
+  const me = safeGet('tokkiName');
+  if (board.status === 'error') {
+    hand('couldn\u2019t load the scores.', W / 2 + 6, 200, 22, RED_PEN);
+    hand('check your connection and try again.', W / 2 + 6, 230, 18);
+  } else if (board.status !== 'ready') {
+    hand('loading scores\u2026', W / 2 + 6, 200, 22);
+  } else if (board.top.length === 0) {
+    hand('no scores yet.', W / 2 + 6, 200, 24);
+    hand('be the first on the board!', W / 2 + 6, 232, 20, BLUE_PEN);
+  } else {
+    ctx.font = `21px ${FONT}`;
+    board.top.slice(0, BOARD_SIZE).forEach((row, i) => {
+      const y = 152 + i * 25;
+      const color = row.name === me ? BLUE_PEN : PENCIL;
+      if (i === 0) { ctx.fillStyle = HIGHLIGHT; ctx.fillRect(58, y - 9, 296, 18); }
+      hand(`${i + 1}.`, 88, y, 21, i < 3 ? RED_PEN : PENCIL, 'right');
+      hand(row.name, 98, y, 21, color, 'left');
+      hand(String(row.score), 346, y, 21, color, 'right');
+      // Dotted line from the name to the score.
+      ctx.font = `21px ${FONT}`;
+      const from = 98 + ctx.measureText(row.name).width + 8;
+      const to = 346 - ctx.measureText(String(row.score)).width - 8;
+      ctx.fillStyle = 'rgba(58, 58, 72, 0.4)';
+      for (let x = from; x < to; x += 6) ctx.fillRect(x, y + 5, 1.6, 1.6);
+    });
+  }
+  button('Back', W / 2 - 136, 420, 136, 46, closeBoard, 33);
+  button('Play', W / 2 + 16, 420, 136, 46, startGame, 34);
 }
 
 function draw() {
@@ -867,6 +1025,8 @@ function draw() {
   ctx.restore();
 
   if (state.mode === 'menu') drawMenu();
+  if (state.mode === 'board') drawBoard();
+  if (state.mode !== 'over' && !nameInput.hidden) nameInput.hidden = true;
   if (state.mode === 'play') drawHud();
   if (state.mode === 'over') drawGameOver();
   drawMuteButton();
@@ -881,8 +1041,9 @@ addEventListener('keydown', (e) => {
   if (e.key === 'm') { ensureAudio(); toggleMute(); }
   if (e.key === ' ' || e.key === 'Enter') {
     e.preventDefault();
-    if (state.mode === 'menu' || (state.mode === 'over' && state.overT > 0.45)) startGame();
+    if (state.mode === 'menu' || state.mode === 'board' || (state.mode === 'over' && state.overT > 0.45)) startGame();
   }
+  if (e.key === 'Escape' && state.mode === 'board') closeBoard();
 });
 addEventListener('keyup', (e) => {
   if (e.key === 'ArrowLeft' || e.key === 'a') keys.left = false;
