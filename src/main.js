@@ -184,7 +184,13 @@ function crunch(dur = 0.16, vol = 0.18) {
 }
 
 const sfx = {
-  jump: () => tone({ freq: 320, to: 640, dur: 0.12, type: 'triangle' }),
+  // A bouncy "hop": a quick rising chirp plus a soft pop, slightly different every time.
+  jump: () => {
+    const f = rand(380, 460);
+    tone({ freq: f, to: f * 2.2, dur: 0.16, type: 'sine', vol: 0.22 });
+    tone({ freq: f * 2, to: f * 3, dur: 0.07, type: 'triangle', vol: 0.06 });
+    tone({ freq: 140, to: 70, dur: 0.06, type: 'sine', vol: 0.15 });
+  },
   spring: () => {
     tone({ freq: 180, to: 950, dur: 0.38, type: 'sine', vol: 0.18 });
     tone({ freq: 360, to: 1300, dur: 0.3, type: 'triangle', vol: 0.05, delay: 0.03 });
@@ -746,6 +752,7 @@ function draw() {
 // ---------- input ----------
 
 addEventListener('keydown', (e) => {
+  ensureAudio();
   if (e.key === 'ArrowLeft' || e.key === 'a') keys.left = true;
   if (e.key === 'ArrowRight' || e.key === 'd') keys.right = true;
   if (e.key === 'm') { ensureAudio(); toggleMute(); }
