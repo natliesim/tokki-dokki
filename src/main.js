@@ -21,7 +21,7 @@ if (window.ResizeObserver) new ResizeObserver(resizeCanvas).observe(canvas);
 const STEP = 1 / 60;
 const GRAVITY = 0.35;
 const JUMP = -10.5;
-const MENU_JUMP = -7;
+const MENU_JUMP = -5;
 const STOMP_JUMP = -11.5;
 const SPRING_JUMP = -17;
 const MOVE_ACCEL = 0.6;
@@ -207,7 +207,6 @@ const sfx = {
   break: () => crunch(),
   over: () => [440, 370, 311, 247].forEach((f, i) => tone({ freq: f, dur: 0.2, type: 'triangle', delay: i * 0.14 })),
   best: () => [523, 659, 784, 1047].forEach((f, i) => tone({ freq: f, dur: 0.16, type: 'square', vol: 0.05, delay: 0.65 + i * 0.1 })),
-  levelUp: () => [523, 659, 784, 988, 1175].forEach((f, i) => tone({ freq: f, dur: 0.12, type: 'triangle', vol: 0.1, delay: i * 0.07 })),
   stomp: () => { tone({ freq: 220, to: 90, dur: 0.12, type: 'square', vol: 0.08 }); tone({ freq: 500, to: 1100, dur: 0.18, type: 'sine', vol: 0.15, delay: 0.05 }); },
   splat: () => { crunch(0.25, 0.25); tone({ freq: 300, to: 60, dur: 0.4, type: 'sawtooth', vol: 0.08 }); },
   click: () => tone({ freq: 700, to: 450, dur: 0.06, type: 'square', vol: 0.05 }),
@@ -299,7 +298,6 @@ function reset(mode) {
     blobs,
     level: 1,
     speed: 1,
-    banner: null,
     particles: [],
     climbed: 0,
     solidTop,
@@ -358,7 +356,6 @@ function update() {
   state.shake *= 0.85;
   if (state.mode !== 'menu') state.reveal = Math.min(1, state.reveal + STEP * 4);
 
-  if (state.banner) { state.banner.t += STEP; if (state.banner.t > 1.6) state.banner = null; }
   if (state.mode === 'over') { state.overT += STEP; return; }
 
   const playing = state.mode === 'play' && !p.dead;
@@ -456,8 +453,6 @@ function update() {
   if (playing && level > state.level) {
     state.level = level;
     state.speed = 1 + SPEED_PER_LEVEL * (level - 1);
-    state.banner = { text: `Level ${level}`, t: 0 };
-    sfx.levelUp();
   }
 
   state.platforms = state.platforms.filter((pl) => pl.y < H + 60);
@@ -777,12 +772,12 @@ function drawMuteButton() {
 
 function drawMenu() {
   const r = pen(3);
-  hand('Sky Hopper', W / 2 + 6, 100, 64, BLUE_PEN, 'center', -0.04);
+  hand('Sky Hopper', W / 2 + 6, 84, 64, BLUE_PEN, 'center', -0.04);
   ctx.strokeStyle = BLUE_PEN;
   ctx.lineWidth = 2.5;
-  sketchLine(W / 2 - 110, 136, W / 2 + 120, 128, r, 1.5);
-  sketchLine(W / 2 - 96, 141, W / 2 + 100, 134, r, 1.5);
-  hand('a doodle bunny hops up the page', W / 2 + 6, 162, 20);
+  sketchLine(W / 2 - 110, 120, W / 2 + 120, 112, r, 1.5);
+  sketchLine(W / 2 - 96, 125, W / 2 + 100, 118, r, 1.5);
+  hand('a doodle bunny hops up the page', W / 2 + 6, 148, 20);
 
   const rows = [
     ['normal', false, 'solid ledge, safe to land'],
@@ -791,37 +786,20 @@ function drawMenu() {
     ['normal', true, 'springs go boing'],
   ];
   rows.forEach(([type, spring, text], i) => {
-    const y = 190 + i * 29 + (i >= 3 ? 6 : 0);
-    drawPlatformShape(78, y, 44, type, spring, 0, 10 + i);
-    hand(text, 136, y + 7, 19, PENCIL, 'left');
+    const y = 190 + i * 40 + (i >= 3 ? 6 : 0);
+    drawPlatformShape(66, y, 44, type, spring, 0, 10 + i);
+    hand(text, 126, y + 7, 19, PENCIL, 'left');
   });
-  drawBlob(null, 100, 322, 11, 15, 1, 0);
-  hand('ink blobs: hop on top, don\u2019t touch!', 136, 322, 19, PENCIL, 'left');
+  drawBlob(null, 88, 362, 11, 15, 1, 0);
+  hand('ink blobs: hop on top, don\u2019t touch!', 126, 362, 19, PENCIL, 'left');
 
-  hand('← → or A / D  ·  tap the sides on a phone', W / 2 + 6, 356, 17, 'rgba(58,58,72,0.85)');
-  hand('it gets faster every 250 points!', W / 2 + 6, 378, 17, RED_PEN);
-  button('Play', W / 2 - 64, 394, 140, 46, startGame, 5);
+  hand('← → or A / D  ·  tap the sides on a phone', W / 2 + 6, 404, 17, 'rgba(58,58,72,0.85)');
+  button('Play', W / 2 - 64, 420, 140, 46, startGame, 5);
 }
 
 function drawHud() {
   hand(String(state.score), MARGIN_X + 10, 28, 34, PENCIL, 'left');
   if (best > 0) hand(`best ${best}`, MARGIN_X + 12, 56, 17, RED_PEN, 'left');
-  hand(`level ${state.level}`, MARGIN_X + 12, best > 0 ? 78 : 56, 17, BLUE_PEN, 'left');
-
-  if (state.banner) {
-    const t = state.banner.t;
-    const pop = easeOutBack(clamp(t / 0.35, 0, 1));
-    ctx.save();
-    ctx.globalAlpha = clamp((1.6 - t) / 0.4, 0, 1);
-    ctx.translate(W / 2 + 10, 190 - t * 12);
-    ctx.rotate(-0.06);
-    ctx.scale(pop, pop);
-    ctx.fillStyle = HIGHLIGHT;
-    ctx.fillRect(-95, -10, 190, 30);
-    hand(state.banner.text, 0, -4, 48, BLUE_PEN);
-    hand('faster!', 0, 32, 24, RED_PEN);
-    ctx.restore();
-  }
 }
 
 function drawGameOver() {
