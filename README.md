@@ -1,10 +1,11 @@
 # Sky Hopper
 
-A small browser game: bounce from cloud to cloud and climb as high as you can.
+A small browser game drawn like a notebook doodle: help the bunny hop up the page and climb as high as you can.
 
 - **Move:** ← → or A / D (on a phone, tap the left or right side)
 - **Start / restart:** Space or tap
-- White clouds are solid, yellow ones move, cracked brown ones break, and red springs launch you higher.
+- Solid ledges are safe, highlighted ones slide, dashed ones break, and red springs launch you higher.
+- **Mute:** the speaker icon or the M key. Sounds are generated in code, no audio files.
 
 ## Run it
 
