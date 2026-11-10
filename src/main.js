@@ -4,9 +4,18 @@ const W = 400;
 const H = 600;
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
-const dpr = Math.min(window.devicePixelRatio || 1, 3);
-canvas.width = W * dpr;
-canvas.height = H * dpr;
+// Match the canvas to its real on-screen size so it stays sharp at any size.
+let scale = 1;
+function resizeCanvas() {
+  const dpr = Math.min(window.devicePixelRatio || 1, 3);
+  const cssW = canvas.getBoundingClientRect().width || W;
+  scale = (cssW * dpr) / W;
+  canvas.width = Math.round(W * scale);
+  canvas.height = Math.round(H * scale);
+}
+resizeCanvas();
+addEventListener('resize', resizeCanvas);
+if (window.ResizeObserver) new ResizeObserver(resizeCanvas).observe(canvas);
 
 // Physics (tuned for 60 steps per second).
 const STEP = 1 / 60;
@@ -200,13 +209,11 @@ let activePointer = null;
 let best = Number(safeGet('skyHopperBest')) || 0;
 let state;
 
-function makePlatform(y, climbed) {
-  // Trickier platforms show up as you climb.
-  const difficulty = Math.min(climbed / 5000, 1);
-  const roll = Math.random();
-  let type = 'normal';
-  if (roll < 0.15 * difficulty + 0.05) type = 'moving';
-  else if (roll < 0.3 * difficulty + 0.08) type = 'fragile';
+// The highest jump is about 157px. Solid ledges are never further apart
+// than this, so there is always a way up.
+const MAX_SOLID_GAP = 120;
+
+function makePlatform(y, type) {
   return {
     x: rand(MARGIN_X - 10, W - PLATFORM_W - 4),
     y,
@@ -221,22 +228,37 @@ function makePlatform(y, climbed) {
   };
 }
 
+// Add ledges above the screen. Solid ledges (normal or moving) form a chain
+// you can always climb; breakable ledges are only extra traps in the gaps.
+function spawnLedges(platforms, climbed, solidTop, upTo) {
+  const difficulty = Math.min(climbed / 5000, 1);
+  const gapMax = 80 + 40 * difficulty;
+  while (solidTop > upTo) {
+    const gap = rand(45, gapMax);
+    const y = solidTop - gap;
+    const type = Math.random() < 0.05 + 0.2 * difficulty ? 'moving' : 'normal';
+    platforms.push(makePlatform(y, type));
+    if (gap > 70 && Math.random() < 0.15 + 0.35 * difficulty) {
+      platforms.push(makePlatform(y + gap / 2, 'fragile'));
+    }
+    solidTop = y;
+  }
+  return solidTop;
+}
+
 function reset(mode) {
   const platforms = [{
     x: W / 2 - PLATFORM_W / 2, y: START_Y, type: 'normal', vx: 0, spring: false, springT: 0,
     broken: false, fallVy: 0, spread: 0, seed: 1,
   }];
-  let y = START_Y;
-  while (y > -H) {
-    y -= rand(50, 85);
-    platforms.push(makePlatform(y, 0));
-  }
+  const solidTop = spawnLedges(platforms, 0, START_Y, -H);
   state = {
     mode, // 'menu' | 'play' | 'over'
     player: { x: W / 2 - 15, y: START_Y - 30, w: 30, h: 30, vx: 0, vy: 0, face: 1, squash: 0 },
     platforms,
     particles: [],
     climbed: 0,
+    solidTop,
     score: 0,
     shake: 0,
     overT: 0,
@@ -353,17 +375,13 @@ function update() {
     p.y = line;
     state.climbed += dy;
     for (const pl of state.platforms) pl.y += dy;
+    state.solidTop += dy;
     for (const pt of state.particles) pt.y += dy;
   }
   state.score = Math.floor(state.climbed / 10);
 
   state.platforms = state.platforms.filter((pl) => pl.y < H + 60);
-  let topY = Math.min(...state.platforms.map((pl) => pl.y));
-  const gapMax = 85 + Math.min(state.climbed / 200, 45);
-  while (topY > -40) {
-    topY -= rand(50, gapMax);
-    state.platforms.push(makePlatform(topY, state.climbed));
-  }
+  state.solidTop = spawnLedges(state.platforms, state.climbed, state.solidTop, -40);
 
   if (p.y > H + 20) {
     state.mode = 'over';
@@ -709,7 +727,7 @@ function drawGameOver() {
 }
 
 function draw() {
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.setTransform(scale, 0, 0, scale, 0, 0);
   state.buttons = [];
   ctx.save();
   if (state.shake > 0.3) ctx.translate(rand(-state.shake, state.shake), rand(-state.shake, state.shake));
