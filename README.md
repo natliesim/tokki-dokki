@@ -1,4 +1,4 @@
-# Sky Hopper
+# Tokki Dokki
 
 A small browser game drawn like a notebook doodle: help the bunny hop up the page and climb as high as you can.
 

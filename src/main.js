@@ -1,4 +1,4 @@
-// Sky Hopper: a doodled bunny hops up the pages of a notebook.
+// Tokki Dokki: a doodled bunny hops up the pages of a notebook.
 
 const W = 400;
 const H = 600;
@@ -41,6 +41,8 @@ const HIGHLIGHT = 'rgba(255, 222, 40, 0.6)';
 const PINK = '#f6a5bf';
 const FONT = '"Patrick Hand", "Comic Sans MS", cursive';
 const MARGIN_X = 36;
+// People who ask for less motion get no screen shake or pencil wobble.
+const REDUCED_MOTION = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
 
 // Difficulty: a new level every 250 points. Each level runs the game a bit
 // faster and adds more sliding ledges, breakable traps and ink blobs.
@@ -772,7 +774,7 @@ function drawMuteButton() {
 
 function drawMenu() {
   const r = pen(3);
-  hand('Sky Hopper', W / 2 + 6, 84, 64, BLUE_PEN, 'center', -0.04);
+  hand('Tokki Dokki', W / 2 + 6, 84, 64, BLUE_PEN, 'center', -0.04);
   ctx.strokeStyle = BLUE_PEN;
   ctx.lineWidth = 2.5;
   sketchLine(W / 2 - 110, 120, W / 2 + 120, 112, r, 1.5);
@@ -856,7 +858,7 @@ function draw() {
   ctx.setTransform(scale, 0, 0, scale, 0, 0);
   state.buttons = [];
   ctx.save();
-  if (state.shake > 0.3) ctx.translate(rand(-state.shake, state.shake), rand(-state.shake, state.shake));
+  if (state.shake > 0.3 && !REDUCED_MOTION) ctx.translate(rand(-state.shake, state.shake), rand(-state.shake, state.shake));
   drawPaper();
   state.platforms.forEach(drawPlatform);
   drawBlobs();
@@ -921,7 +923,7 @@ function loop(now) {
   acc += Math.min((now - last) / 1000, 0.1) * state.speed;
   last = now;
   while (acc >= STEP) { update(); acc -= STEP; }
-  boil = Math.floor(now / 130);
+  boil = REDUCED_MOTION ? 0 : Math.floor(now / 130);
   draw();
   requestAnimationFrame(loop);
 }
