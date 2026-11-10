@@ -1,6 +1,6 @@
 # Tokki Dokki
 
-**Play it:** https://natliesim.github.io/NewProject/
+**Play it:** https://natliesim.github.io/tokki-dokki/
 
 A small browser game drawn like a notebook doodle: help the bunny hop up the page and climb as high as you can.
 
