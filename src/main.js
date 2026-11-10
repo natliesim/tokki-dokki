@@ -300,8 +300,14 @@ function saveName() {
     .catch(() => { run.entry = 'error'; });
 }
 
+function goHome() {
+  sfx.click();
+  reset('menu');
+}
+
 function openBoard() {
   sfx.click();
+  if (state.mode === 'over') reset('menu');
   state.mode = 'board';
   board.status = 'idle';
   loadBoard();
@@ -910,7 +916,7 @@ function drawGameOver() {
   const t = clamp(state.overT / 0.45, 0, 1);
   const slide = (1 - easeOutBack(t)) * H * 0.7;
   const asking = state.entry !== 'none';
-  const cw = 300, ch = asking ? 360 : 300;
+  const cw = 300, ch = asking ? 420 : 360;
   const cx = (W - cw) / 2 + 4, cy = 140 + slide;
   const r = pen(9);
 
@@ -972,7 +978,16 @@ function drawGameOver() {
     nameInput.hidden = !showInput;
     if (showInput && window.matchMedia?.('(pointer: fine)').matches) nameInput.focus({ preventScroll: true });
   }
-  if (t >= 1) button('Play again', W / 2 - 86, cy + (asking ? 290 : 220), 180, 50, startGame, 6);
+  if (t >= 1) {
+    const by = cy + (asking ? 290 : 220);
+    button('Play again', W / 2 - 86, by, 180, 50, startGame, 6);
+    if (boardEnabled) {
+      button('Scores', cx + 34, by + 64, 112, 42, openBoard, 35);
+      button('Home', cx + 160, by + 64, 112, 42, goHome, 36);
+    } else {
+      button('Home', W / 2 - 52, by + 64, 112, 42, goHome, 36);
+    }
+  }
 }
 
 function drawBoard() {
