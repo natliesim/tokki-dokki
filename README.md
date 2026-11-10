@@ -1,5 +1,7 @@
 # Tokki Dokki
 
+**Play it:** https://natliesim.github.io/NewProject/
+
 A small browser game drawn like a notebook doodle: help the bunny hop up the page and climb as high as you can.
 
 - **Move:** ← → or A / D (on a phone, tap the left or right side)
@@ -17,3 +19,5 @@ npm run dev
 ```
 
 Then open the URL Vite prints. `npm run build` makes a static site in `dist/`.
+
+Every push to `main` rebuilds the game and publishes it to GitHub Pages (see `.github/workflows/deploy.yml`).
